@@ -160,7 +160,111 @@ public class PPResponse {
 
 现在我们已经可以拿到请求的方法和 url 了，下面让我们根据 URL 来返回对应的静态资源文件。
 
+```java
+if ("GET".equals(ppRequest.getMethod()) && url.endsWith(".html")) {
+    String classesPath = Objects.requireNonNull(getClass().getClassLoader().getResource("")).getPath();
+    byte[] bytes = Files.readAllBytes(Path.of(classesPath, url));
+    log.info("[server] - static file content: {}", new String(bytes, StandardCharsets.UTF_8));
+    ppResponse.write(InnerHTMLUtil.htmlResponse(new String(bytes, StandardCharsets.UTF_8)).getBytes(StandardCharsets.UTF_8));
+} else {
+    ppResponse.write(InnerHTMLUtil.httpResponse("hello from mini-puppy").getBytes(StandardCharsets.UTF_8));
+}
+```
 
+根据 url 来判断是否是静态资源文件，如果是则读取文件内容。返回静态文件的方式也很简单粗暴，直接输出到 OutputStream 中即可。
+
+### Servlet支持
+
+接触过 spring-mvc 至少会知道 servlet 是和一个 url 相对应的。url 请求过来之后我们要找到支持处理这条 url 的 servlet，用对应的 servlet 处理对应的请求。
+
+那我们就需要一个 url 和 servlet 对应的容器。在这里我们就使用 Map 来实现。
+
+```java
+public class ServletRegistry {
+    private static final Map<String, HttpServlet> SERVLET_HOLDER = new ConcurrentHashMap<>(32);
+    public static void registerServlet(String url, HttpServlet servlet) {
+        SERVLET_HOLDER.put(url, servlet);
+    }
+    public static HttpServlet getServlet(String url) {
+        return SERVLET_HOLDER.get(url);
+    }
+}
+```
+
+通过上面这个类我们就实现了 url 和 servlet 的对应关系。支持 servlet 注册和查找。其实这就是类似下面的 `web.xml`
+
+```xml
+<?xml version="1.0" encoding="UTF-8" ?>
+<web-app>
+
+    <servlet>
+        <servlet-name>test</servlet-name>
+        <servlet-class>one.mini.servlet.TestServlet</servlet-class>
+    </servlet>
+
+    <servlet-mapping>
+        <servlet-name>test</servlet-name>
+        <url-pattern>/test</url-pattern>
+    </servlet-mapping>
+
+</web-app>
+```
+
+上面这段 xml 的意思就是通过 xml 来配置注册一个 servlet，并和 url 映射起来。
+
+我们的小 demo 还是怎么简单怎么来，直接从代码中注册即可。
+
+```java
+public void initServletMapping() {
+    ServletRegistry.registerServlet("/test", new TestServlet());
+    ServletRegistry.registerServlet("/aaa", new AAAServlet());
+    ServletRegistry.registerServlet("/bbb", new BBBServlet());
+}
+```
+
+只要在服务启动的时候调用上面的方法将对应的 url 和 servlet 注册即可。在处理请求的时候我们就可以使用到对应的 servlet 来处理了。
+
+```java
+public void doHandle(Socket socket) {
+    try {
+        PPRequest ppRequest = new PPRequest(socket.getInputStream());
+        log.info("[server] - processing request for client {}:{} method={} url={}", socket.getInetAddress(), socket.getPort(), ppRequest.getMethod(), ppRequest.getUrl());
+        OutputStream outputStream = socket.getOutputStream();
+        PPResponse ppResponse = new PPResponse(outputStream);
+        String url = ppRequest.getUrl();
+
+        // 3 使用 servlet
+        HttpServlet servlet = ServletRegistry.getServlet(url);
+        servlet.service(ppRequest, ppResponse);
+
+        // 2 抽象 request 和 response
+        /*if ("GET".equals(ppRequest.getMethod()) && url.endsWith(".html")) {
+            String classesPath = Objects.requireNonNull(getClass().getClassLoader().getResource("")).getPath();
+            byte[] bytes = Files.readAllBytes(Path.of(classesPath, url));
+            log.info("[server] - static file content: {}", new String(bytes, StandardCharsets.UTF_8));
+            // URL resource = getClass().getClassLoader().getResource(url);
+            // Files.readAllBytes(Path.of(resource.getPath()));
+            // String htmlFile = findMappingStaticsHtml(url);
+            ppResponse.write(InnerHTMLUtil.htmlResponse(new String(bytes, StandardCharsets.UTF_8)).getBytes(StandardCharsets.UTF_8));
+        } else {
+            ppResponse.write(InnerHTMLUtil.httpResponse("hello from mini-puppy").getBytes(StandardCharsets.UTF_8));
+        }*/
+
+        // 1 手动处理
+        /*String response = """
+                        HTTP/1.1 200 OK\r
+                        Content-Type: text/plain\r
+                        \r
+                        hello from mini-puppy""";
+        outputStream.write(response.getBytes(StandardCharsets.UTF_8));
+        outputStream.flush();*/
+
+        socket.close();
+    } catch (IOException | ServletException e) {
+        log.error("[server] - process client request error", e);
+    }
+}
+```
 
 ## Reference
 

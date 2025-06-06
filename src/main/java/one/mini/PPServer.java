@@ -2,6 +2,8 @@ package one.mini;
 
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
+import one.mini.servlet.ServletRegistry;
+import one.mini.servlet.TestServlet;
 
 import java.io.IOException;
 import java.net.ServerSocket;
@@ -25,12 +27,17 @@ public class PPServer {
         th.start();
     }
 
+    public void initServletMapping() {
+        ServletRegistry.registerServlet("/test", new TestServlet());
+    }
+
     public void start() {
         try (ServerSocket serverSocket = new ServerSocket()) {
             serverSocket.bind(new java.net.InetSocketAddress(host, port), 128); // backlog 表示处理请求的队列长度
             log.info("[server] - server started, host {} port {}", host, port);
             this.ss = serverSocket;
             PPSocketHandler socketHandler = new PPSocketHandler();
+            initServletMapping();
             while (true) {
                 Socket socket = serverSocket.accept();
                 log.info("[server] - client {}:{} connected", socket.getInetAddress(), socket.getPort());

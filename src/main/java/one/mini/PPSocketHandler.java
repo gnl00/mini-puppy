@@ -1,8 +1,13 @@
 package one.mini;
 
 import lombok.extern.slf4j.Slf4j;
+import one.mini.domain.PPRequest;
+import one.mini.domain.PPResponse;
+import one.mini.servlet.ServletRegistry;
 import one.mini.utils.InnerHTMLUtil;
 
+import javax.servlet.ServletException;
+import javax.servlet.http.HttpServlet;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.Socket;
@@ -29,7 +34,13 @@ public class PPSocketHandler {
             OutputStream outputStream = socket.getOutputStream();
             PPResponse ppResponse = new PPResponse(outputStream);
             String url = ppRequest.getUrl();
-            if ("GET".equals(ppRequest.getMethod()) && url.endsWith(".html")) {
+
+            // 3 使用 servlet
+            HttpServlet servlet = ServletRegistry.getServlet(url);
+            servlet.service(ppRequest, ppResponse);
+
+            // 2 抽象 request 和 response
+            /*if ("GET".equals(ppRequest.getMethod()) && url.endsWith(".html")) {
                 String classesPath = Objects.requireNonNull(getClass().getClassLoader().getResource("")).getPath();
                 byte[] bytes = Files.readAllBytes(Path.of(classesPath, url));
                 log.info("[server] - static file content: {}", new String(bytes, StandardCharsets.UTF_8));
@@ -39,7 +50,9 @@ public class PPSocketHandler {
                 ppResponse.write(InnerHTMLUtil.htmlResponse(new String(bytes, StandardCharsets.UTF_8)).getBytes(StandardCharsets.UTF_8));
             } else {
                 ppResponse.write(InnerHTMLUtil.httpResponse("hello from mini-puppy").getBytes(StandardCharsets.UTF_8));
-            }
+            }*/
+
+            // 1 手动处理
             /*String response = """
                             HTTP/1.1 200 OK\r
                             Content-Type: text/plain\r
@@ -47,8 +60,9 @@ public class PPSocketHandler {
                             hello from mini-puppy""";
             outputStream.write(response.getBytes(StandardCharsets.UTF_8));
             outputStream.flush();*/
+
             socket.close();
-        } catch (IOException e) {
+        } catch (IOException | ServletException e) {
             log.error("[server] - process client request error", e);
         }
     }

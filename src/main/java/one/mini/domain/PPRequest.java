@@ -1,17 +1,19 @@
-package one.mini;
+package one.mini.domain;
 
 import lombok.Data;
-import lombok.extern.slf4j.Slf4j;
+import lombok.EqualsAndHashCode;
+import lombok.Getter;
 
 import java.io.InputStream;
 
-@Slf4j
-@Data
-public class PPRequest {
+@EqualsAndHashCode(callSuper = true)
+public class PPRequest extends AbstractPPRequest {
 
+    @Getter
     private String url;
+    @Getter
     private String method;
-    private InputStream inputStream;
+    private final InputStream inputStream;
 
     public PPRequest(InputStream inputStream) {
         this.inputStream = inputStream;
@@ -29,7 +31,6 @@ public class PPRequest {
                     String[] lines = requestLines[0].split(" ");
                     method = lines[0];
                     url = lines[1];
-                    // log.info("[server] - read from request stream method={} url={}", method, url);
                     break;
                 }
             }
