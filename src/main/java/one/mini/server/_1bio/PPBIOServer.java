@@ -1,7 +1,8 @@
-package one.mini;
+package one.mini.server._1bio;
 
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
+import one.mini.PPSocketHandler;
 import one.mini.servlet.ServletRegistry;
 import one.mini.servlet.TestServlet;
 
@@ -11,13 +12,13 @@ import java.net.Socket;
 
 @Slf4j
 @Data
-public class PPServer {
+public class PPBIOServer {
 
     private ServerSocket ss;
     private String host;
     private int port;
 
-    public PPServer(String host, int port) {
+    public PPBIOServer(String host, int port) {
         this.host = host;
         this.port = port;
     }
@@ -69,6 +70,6 @@ public class PPServer {
 
     public static void main(String[] args) {
         log.info("[main] ready to start server");
-        new PPServer("localhost", 5555).startSync();
+        new PPBIOServer("localhost", 5555).startSync();
     }
 }

@@ -266,6 +266,130 @@ public void doHandle(Socket socket) {
 }
 ```
 
+至此，简单的请求处理和 servlet 处理都基本完成了，接下来会看一下之前的程序有什么可以优化的地方？
+
+其实刚开始的时候我们已经小小的优化过一波了：1、抽离启动线程；2、使用多线程处理多个请求；
+
+前面的优化逻辑都是从减少阻塞，增大并发量出发的。此外我们还可以发现，目前使用的 ServerSocket 是基于 BIO，那么从 IO 层面出发常见的优化方向还有使用 NIO/AIO 或者使用 Netty 来作为基建服务等手段。
+
+基于 NIO 修改服务端：
+
+```java
+public void start() {
+    try (ServerSocketChannel ssc = ServerSocketChannel.open()) {
+        ssc.bind(new java.net.InetSocketAddress(host, port), 128); // backlog 表示处理请求的队列长度
+        ssc.configureBlocking(false);
+
+        selector = Selector.open();
+        ssc.register(selector, SelectionKey.OP_ACCEPT);
+
+        log.info("[server] - server started, host {} port {}", host, port);
+        initServletMapping();
+        while (true) {
+            int select = selector.select();
+            if (select == 0) continue;
+            Set<SelectionKey> selectionKeys = selector.selectedKeys();
+            Iterator<SelectionKey> iterator = selectionKeys.iterator();
+            while (iterator.hasNext()) {
+                SelectionKey selectionKey = iterator.next();
+                iterator.remove();
+                if (selectionKey.isAcceptable()) {
+                    handleAccept(selectionKey);
+                }
+                if (selectionKey.isReadable()) {
+                    handleReadAsync(selectionKey);
+                }
+            }
+        }
+    } catch (IOException e) {
+        log.error("[server] - start error", e);
+    }
+}
+
+private static final ExecutorService EXECUTOR_SERVICE = Executors.newFixedThreadPool(32);
+
+public void handleAccept(SelectionKey selectionKey) {
+    try {
+        ServerSocketChannel serverSocketChannel = (ServerSocketChannel) selectionKey.channel();
+        SocketChannel clientChannel = serverSocketChannel.accept();
+        clientChannel.configureBlocking(false);
+        clientChannel.register(selector, SelectionKey.OP_READ);
+        log.info("[server] - client {} connected", clientChannel);
+    } catch (IOException e) {
+        log.error("[server] - handle ACCEPT event error", e);
+    }
+}
+
+public void handleReadAsync(SelectionKey selectionKey) throws IOException {
+    EXECUTOR_SERVICE.execute(() -> {
+        try {
+            SocketChannel clientChannel = (SocketChannel) selectionKey.channel();
+            ByteBuffer buffer = ByteBuffer.allocate(1024);
+            if (null == clientChannel) return;
+            int readLen = clientChannel.read(buffer);
+
+            /*StringBuilder sb = new StringBuilder();
+            int receivedLen = 0;
+            while (readLen > 0) {
+                receivedLen += readLen;
+                buffer.flip(); // 切换到读模式再读取数据
+                while (buffer.hasRemaining()) {
+                    sb.append(Charset.defaultCharset().decode(buffer));
+                }
+                buffer.clear();
+                readLen = clientChannel.read(buffer);
+            }
+            TimeUnit.MILLISECONDS.sleep(10);
+            log.info("[server] - received DONE");
+            clientChannel.close();
+            log.info("[server] - client {} closed", clientChannel);
+            log.info("[server] - received from client len: {} content: {}", receivedLen, sb);*/
+
+            if (readLen > 0) {
+                buffer.flip(); // 切换到读模式再读取数据
+                String readableContent = Charset.defaultCharset().decode(buffer).toString();
+                log.info("[server] - received from client: {}", readableContent);
+                /*String[] lines = readableContent.split("\n");
+                String[] line = lines[0].split(" ");
+                String method = line[0];
+                String url = line[1];
+                // 拿到这些信息之后就可以和之前一样根据 url 处理 servlet
+                */
+                clientChannel.write(ByteBuffer.wrap(InnerHTMLUtil.htmlResponse("hello from mini-puppy server based on nio").getBytes(StandardCharsets.UTF_8)));
+                TimeUnit.MILLISECONDS.sleep(100);
+                log.info("[server] - received DONE");
+                clientChannel.close();
+                log.info("[server] - client {} closed", clientChannel);
+            }
+
+        } catch (IOException | RuntimeException | InterruptedException e) {
+            log.error("[server] - handle READ event error", e);
+        }
+    });
+}
+
+public void handleRead(SelectionKey selectionKey) throws IOException {
+    try {
+        SocketChannel clientChannel = (SocketChannel) selectionKey.channel();
+        ByteBuffer buffer = ByteBuffer.allocate(1024);
+        int readLen = clientChannel.read(buffer);
+        if (readLen > 0) {
+            buffer.flip(); // 切换到读模式再读取数据
+            log.info("[server] - received from client: {}", Charset.defaultCharset().decode(buffer));
+            clientChannel.write(ByteBuffer.wrap(InnerHTMLUtil.htmlResponse("hello from mini-puppy server based on nio").getBytes(StandardCharsets.UTF_8)));
+        } else {
+            clientChannel.close();
+            log.info("[server] - client {} closed", clientChannel);
+        }
+
+    } catch (IOException e) {
+        log.error("[server] - handle READ event error", e);
+    }
+}
+```
+
+基于 NIO 的代码比之前的 BIO 复杂了许多，涉及到 Selector/Channel/ByteBuffer。使用 Netty 的话代码就好理解多了。
+
 ## Reference
 
 - https://github.com/houbb/minicat?tab=readme-ov-file
