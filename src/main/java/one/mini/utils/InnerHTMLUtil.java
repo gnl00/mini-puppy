@@ -2,7 +2,7 @@ package one.mini.utils;
 
 public class InnerHTMLUtil {
 
-    public static String httpResponse(String content) {
+    public static String textResponse(String content) {
         String responseFormat = """
                         HTTP/1.1 200 OK\r
                         Content-Type: text/plain\r

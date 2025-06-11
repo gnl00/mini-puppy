@@ -1,20 +1,15 @@
-package one.mini;
+package one.mini.server._1bio;
 
 import lombok.extern.slf4j.Slf4j;
-import one.mini.domain.PPRequest;
-import one.mini.domain.PPResponse;
+import one.mini.domain.bio.PPRequest;
+import one.mini.domain.bio.PPResponse;
 import one.mini.servlet.ServletRegistry;
-import one.mini.utils.InnerHTMLUtil;
 
 import javax.servlet.ServletException;
 import javax.servlet.http.HttpServlet;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.Socket;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.Objects;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 

@@ -1,6 +1,7 @@
-package one.mini.domain;
+package one.mini.domain.bio;
 
 import lombok.EqualsAndHashCode;
+import one.mini.domain.AbstractPPResponse;
 
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;

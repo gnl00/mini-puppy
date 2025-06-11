@@ -1,8 +1,8 @@
-package one.mini.domain;
+package one.mini.domain.bio;
 
-import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
+import one.mini.domain.AbstractPPRequest;
 
 import java.io.InputStream;
 

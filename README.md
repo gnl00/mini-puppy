@@ -272,6 +272,8 @@ public void doHandle(Socket socket) {
 
 前面的优化逻辑都是从减少阻塞，增大并发量出发的。此外我们还可以发现，目前使用的 ServerSocket 是基于 BIO，那么从 IO 层面出发常见的优化方向还有使用 NIO/AIO 或者使用 Netty 来作为基建服务等手段。
 
+### NIO/Netty
+
 基于 NIO 修改服务端：
 
 ```java
@@ -319,7 +321,6 @@ public void handleAccept(SelectionKey selectionKey) {
         log.error("[server] - handle ACCEPT event error", e);
     }
 }
-
 public void handleReadAsync(SelectionKey selectionKey) throws IOException {
     EXECUTOR_SERVICE.execute(() -> {
         try {
@@ -327,24 +328,6 @@ public void handleReadAsync(SelectionKey selectionKey) throws IOException {
             ByteBuffer buffer = ByteBuffer.allocate(1024);
             if (null == clientChannel) return;
             int readLen = clientChannel.read(buffer);
-
-            /*StringBuilder sb = new StringBuilder();
-            int receivedLen = 0;
-            while (readLen > 0) {
-                receivedLen += readLen;
-                buffer.flip(); // 切换到读模式再读取数据
-                while (buffer.hasRemaining()) {
-                    sb.append(Charset.defaultCharset().decode(buffer));
-                }
-                buffer.clear();
-                readLen = clientChannel.read(buffer);
-            }
-            TimeUnit.MILLISECONDS.sleep(10);
-            log.info("[server] - received DONE");
-            clientChannel.close();
-            log.info("[server] - client {} closed", clientChannel);
-            log.info("[server] - received from client len: {} content: {}", receivedLen, sb);*/
-
             if (readLen > 0) {
                 buffer.flip(); // 切换到读模式再读取数据
                 String readableContent = Charset.defaultCharset().decode(buffer).toString();
@@ -367,7 +350,6 @@ public void handleReadAsync(SelectionKey selectionKey) throws IOException {
         }
     });
 }
-
 public void handleRead(SelectionKey selectionKey) throws IOException {
     try {
         SocketChannel clientChannel = (SocketChannel) selectionKey.channel();
@@ -381,7 +363,6 @@ public void handleRead(SelectionKey selectionKey) throws IOException {
             clientChannel.close();
             log.info("[server] - client {} closed", clientChannel);
         }
-
     } catch (IOException e) {
         log.error("[server] - handle READ event error", e);
     }
@@ -389,6 +370,93 @@ public void handleRead(SelectionKey selectionKey) throws IOException {
 ```
 
 基于 NIO 的代码比之前的 BIO 复杂了许多，涉及到 Selector/Channel/ByteBuffer。使用 Netty 的话代码就好理解多了。
+
+```java
+public static class PPChannelRequestHandler extends ChannelInboundHandlerAdapter {
+    @Override
+    public void channelRead(ChannelHandlerContext ctx, Object msg) {
+        ByteBuf buffer = (ByteBuf) msg;
+        log.info("[server] - received from client: {}", buffer.toString(Charset.defaultCharset()));
+        ctx.write(ByteBuffer.wrap(InnerHTMLUtil.htmlResponse("hello from mini-puppy server based on netty").getBytes(StandardCharsets.UTF_8)));
+        ctx.flush();
+    }
+    @Override
+    public void channelReadComplete(ChannelHandlerContext ctx) {
+        ctx.close();
+    }
+}
+public void start() {
+    try (
+            MultiThreadIoEventLoopGroup bossGroup = new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
+            MultiThreadIoEventLoopGroup workerGroup = new MultiThreadIoEventLoopGroup(NioIoHandler.newFactory());
+    ) {
+        ServerBootstrap serverBootstrap = new ServerBootstrap();
+        serverBootstrap.group(bossGroup, workerGroup)
+                .channel(NioServerSocketChannel.class)
+                .option(ChannelOption.SO_BACKLOG, 128)
+                .childOption(ChannelOption.SO_KEEPALIVE, true)
+                .childHandler(new ChannelInitializer<SocketChannel>() {
+                    @Override
+                    protected void initChannel(SocketChannel ch) {
+                        ch.pipeline().addLast(new PPChannelRequestHandler());
+                    }
+                });
+        initServletMapping();
+        ChannelFuture future = serverBootstrap.bind(port);
+        log.info("[server] - server started at port: {}", port);
+        future.channel().closeFuture().sync();
+    } catch (InterruptedException e) {
+        log.error("[server] - server error", e);
+    }
+}
+```
+
+可以看到，相比于 NIO，我们需要编写的代码少了很多，很快就能实现一个服务。
+
+### 加载 Jar 包
+
+在前面的代码中，我们已经实现了内部 servlet 的加载，但是想想，我们在使用 tomcat 的时候往往都是加载自己自定义的 war/jar 包的，这块逻辑如何实现呢？
+
+简单一点出发，我们可能会想到 SPI，加载外部类。
+
+```java
+/**
+ * 利用自定义 classloader 加载外部的 servlet jar 包，并注册 servlet
+ */
+public void loadExternalJar(String filePath) {
+    if (StringUtil.isNullOrEmpty(filePath) || !filePath.endsWith(".jar")) {
+        return;
+    }
+    ExternalClassLoader ecl = new ExternalClassLoader(new URL[]{});
+    try {
+        ecl.addURL(new File(filePath).toURL());
+    } catch (MalformedURLException e) {
+        log.error("[server] - load external jar error, transform file to url error", e);
+    }
+    registerServlets(ecl);
+}
+
+public void registerServlets(ClassLoader cl) {
+    Thread.currentThread().setContextClassLoader(cl);
+    ServiceLoader<HttpServlet> services = ServiceLoader.load(HttpServlet.class);
+    for (HttpServlet service : services) {
+        if (AnnotationUtils.isAnnotationPresent(service.getClass(), one.mini.anno.ReqPath.class)) {
+            ReqPath reqPath = AnnotationUtils.getAnnotation(service.getClass(), ReqPath.class);
+            for (String p : reqPath.path()) {
+                ServletRegistry.registerServlet(p, service);
+                log.info("[server] - registered path: {} servlet: {}", p, service.toString());
+            }
+        }
+    }
+    Thread.currentThread().setContextClassLoader(getClass().getClassLoader());
+}
+```
+
+这样就完成加载外部 jar 包的逻辑了。这里的 SPI 文件就相当于 tomcat 中需要的 web.xml 文件，里面存放了 servlet 的信息。
+
+为了简化操作，使用了一个自定义注解 @ReqPath 来注册 servlet 的路径，这样在加载 jar 包的时候，只需要扫描这个注解即可。
+
+目前硬编码了外部 jar 的路径为 target/classes/xxx.jar，只需要 `mvn clean & package` 后启动 netty 服务器即可测试。
 
 ## Reference
 
