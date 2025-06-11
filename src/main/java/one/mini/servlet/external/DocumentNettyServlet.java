@@ -1,6 +1,7 @@
 package one.mini.servlet.external;
 
 import one.mini.anno.ReqPath;
+import one.mini.domain.netty.PPNettyRequest;
 import one.mini.domain.netty.PPNettyResponse;
 import one.mini.utils.InnerHTMLUtil;
 
@@ -13,7 +14,7 @@ public class DocumentNettyServlet extends HttpServlet {
     @Override
     protected void doGet(HttpServletRequest req, HttpServletResponse resp) {
         PPNettyResponse response = (PPNettyResponse) resp;
-        response.send(InnerHTMLUtil.textResponse("GET response from mini-puppy base on netty DocumentNettyServlet"));
+        response.send(InnerHTMLUtil.textResponse("GET response from mini-puppy base on netty DocumentNettyServlet " + ((PPNettyRequest) req).getPort()));
     }
 
     @Override

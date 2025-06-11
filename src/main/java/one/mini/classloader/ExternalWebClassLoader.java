@@ -3,8 +3,8 @@ package one.mini.classloader;
 import java.net.URL;
 import java.net.URLClassLoader;
 
-public class ExternalClassLoader extends URLClassLoader {
-    public ExternalClassLoader(URL[] urls) {
+public class ExternalWebClassLoader extends URLClassLoader {
+    public ExternalWebClassLoader(URL[] urls) {
         super(urls);
     }
 

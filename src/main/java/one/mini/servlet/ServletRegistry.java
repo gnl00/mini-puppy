@@ -16,4 +16,14 @@ public class ServletRegistry {
         return SERVLET_HOLDER.get(url);
     }
 
+    private static final Map<Integer, PPWebServletContext> WEB_CONTEXT_HOLDER = new ConcurrentHashMap<>(64);
+
+    public static PPWebServletContext getWebContext(Integer port) {
+        return WEB_CONTEXT_HOLDER.get(port);
+    }
+
+    public static void addWebContext(Integer port, PPWebServletContext context) {
+        WEB_CONTEXT_HOLDER.put(port, context);
+    }
+
 }

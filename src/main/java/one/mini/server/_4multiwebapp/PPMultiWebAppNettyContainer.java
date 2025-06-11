@@ -1,4 +1,4 @@
-package one.mini.server._3netty;
+package one.mini.server._4multiwebapp;
 
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.ChannelFuture;
@@ -16,16 +16,18 @@ import io.netty.util.internal.StringUtil;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import one.mini.anno.ReqPath;
+import one.mini.classloader.ExternalWebClassLoader;
 import one.mini.domain.netty.PPNettyRequest;
 import one.mini.domain.netty.PPNettyResponse;
-import one.mini.classloader.ExternalWebClassLoader;
+import one.mini.servlet.PPWebServletContext;
 import one.mini.servlet.ServletRegistry;
-import one.mini.servlet.TestNettyServlet;
 import one.mini.utils.AnnotationUtils;
 import one.mini.utils.InnerHTMLUtil;
 
+import javax.servlet.ServletException;
 import javax.servlet.http.HttpServlet;
 import java.io.File;
+import java.io.IOException;
 import java.net.MalformedURLException;
 import java.net.ServerSocket;
 import java.net.URL;
@@ -35,25 +37,37 @@ import java.util.ServiceLoader;
 
 @Slf4j
 @Data
-public class PPNettyServer {
+public class PPMultiWebAppNettyContainer {
 
     private ServerSocket ss;
     private String host;
-    private int port;
+    private int defaultPort = 8080;
 
     private Selector selector;
 
-    public PPNettyServer(String host, int port) {
+    public PPMultiWebAppNettyContainer(String host, int defaultPort) {
         this.host = host;
-        this.port = port;
+        this.defaultPort = defaultPort;
     }
 
-    public synchronized void startSync() {
-        Thread th = new Thread(this::start);
+    public synchronized void startAsync() {
+        Thread th = new Thread(this::init);
         th.start();
     }
 
-    public void start() {
+    public void init() {
+        String rootPath = getClass().getClassLoader().getResource("").getPath();
+        String externalJarFilename = "mini-puppy-1.0-SNAPSHOT.jar";
+        String externalJarFilename2 = "mini-puppy-1.0-SNAPSHOT.jar";
+        int port1 = 5555; // 假设从 externalJar1 配置文件中解析出 port=5555
+        int port2 = 5566; // 假设从 externalJar2 配置文件中解析出 port=5566
+        loadExternalWebApp(Paths.get(rootPath, externalJarFilename).toString(), port1);
+        new Thread(() -> startWebServer(port1)).start();
+        loadExternalWebApp(Paths.get(rootPath, externalJarFilename2).toString(), port2);
+        new Thread(() -> startWebServer(port2)).start();
+    }
+
+    public void startWebServer(int port) {
         try (
                 MultiThreadIoEventLoopGroup bossGroup = new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
                 MultiThreadIoEventLoopGroup workerGroup = new MultiThreadIoEventLoopGroup(NioIoHandler.newFactory());
@@ -70,17 +84,10 @@ public class PPNettyServer {
                             ch.pipeline()
                                     .addLast(new StringDecoder())
                                     .addLast(new StringEncoder())
-                                    // .addLast(new LineBasedFrameDecoder(1024))
-                                    // .addLast(new LineEncoder())
-                                    // .addLast(new CorsHandler(CorsConfigBuilder.forAnyOrigin().build()))
-                                    .addLast(new PPChannelStringRequestHandler())
+                                    .addLast(new PPServletDispatcher())
                             ;
                         }
                     });
-            initServletMapping();
-            String rootPath = getClass().getClassLoader().getResource("").getPath();
-            String externalJarFilename = "mini-puppy-1.0-SNAPSHOT.jar";
-            loadExternalJar(Paths.get(rootPath, externalJarFilename).toString());
             ChannelFuture future = serverBootstrap.bind(port);
             log.info("[server] - server started at port: {}", port);
             future.channel().closeFuture().sync();
@@ -89,20 +96,25 @@ public class PPNettyServer {
         }
     }
 
-    public static class PPChannelStringRequestHandler extends SimpleChannelInboundHandler<String> {
+    public static class PPServletDispatcher extends SimpleChannelInboundHandler<String> {
         @Override
         protected void channelRead0(ChannelHandlerContext ctx, String requestStr) throws Exception {
             log.info("[server] - received from client: {}", requestStr);
-            PPNettyRequest request = new PPNettyRequest(requestStr);
+            dispatch(ctx, new PPNettyRequest(requestStr));
+        }
+
+        private void dispatch(ChannelHandlerContext ctx, PPNettyRequest request) throws ServletException, IOException {
             if ("/".equals(request.getUrl())) {
                 ctx.writeAndFlush(InnerHTMLUtil.htmlResponse("<h1>Welcome - puppy-server base on netty-4.2-final</h1>"));
                 return;
             }
-            if (null == ServletRegistry.getServlet(request.getUrl())) {
+            PPWebServletContext webContext = ServletRegistry.getWebContext(request.getPort());
+            HttpServlet servlet = webContext.getServlet(request.getUrl());
+            if (null == servlet) {
                 ctx.writeAndFlush(InnerHTMLUtil.htmlResponse("<h1>404 Not Found</h1>"));
                 return;
             }
-            ServletRegistry.getServlet(request.getUrl()).service(request, new PPNettyResponse(ctx));
+            servlet.service(request, new PPNettyResponse(ctx));
         }
 
         @Override
@@ -117,37 +129,44 @@ public class PPNettyServer {
         }
     }
 
-    public void initServletMapping() {
-        ServletRegistry.registerServlet("/test-netty", new TestNettyServlet());
-    }
-
     /**
      * 利用自定义 classloader 加载外部的 servlet jar 包，并注册 servlet
      */
-    public void loadExternalJar(String filePath) {
+    public void loadExternalWebApp(String filePath, int port) {
         if (StringUtil.isNullOrEmpty(filePath) || !filePath.endsWith(".jar")) {
             return;
         }
+        /**
+         * 每 load 一次 webapp 都需要一个新的 classloader，避免遇到相同的 servlet url 冲突
+         */
         ExternalWebClassLoader ecl = new ExternalWebClassLoader(new URL[]{});
         try {
-            ecl.addURL(new File(filePath).toURL());
+            File file = new File(filePath);
+            if (file.exists()) {
+                ecl.addURL(file.toURL());
+            } else {
+                log.info("[server] - load external jar failed, file not exists: {}", filePath);
+                return;
+            }
         } catch (MalformedURLException e) {
-            log.error("[server] - load external jar error, transform file to url error", e);
+            log.error("[server] - load external jar error, get file url error", e);
         }
-        registerServlets(ecl);
+        PPWebServletContext webCtx = new PPWebServletContext(ecl);
+        registerServlets(ecl, webCtx);
+        ServletRegistry.addWebContext(port, webCtx);
     }
 
-    public void registerServlets(ClassLoader cl) {
+    public void registerServlets(ClassLoader cl, PPWebServletContext webCtx) {
         /*
          * 需要设置当前线程的 classloader 为我们自定义的 classloader，否则会报 java.lang.NoClassDefFoundError: javax/servlet/ServletException
          */
         Thread.currentThread().setContextClassLoader(cl);
         ServiceLoader<HttpServlet> services = ServiceLoader.load(HttpServlet.class);
         for (HttpServlet service : services) {
-            if (AnnotationUtils.isAnnotationPresent(service.getClass(), one.mini.anno.ReqPath.class)) {
+            if (AnnotationUtils.isAnnotationPresent(service.getClass(), ReqPath.class)) {
                 ReqPath reqPath = AnnotationUtils.getAnnotation(service.getClass(), ReqPath.class);
                 for (String p : reqPath.path()) {
-                    ServletRegistry.registerServlet(p, service);
+                    webCtx.registerServlet(p, service);
                     log.info("[server] - registered path: {} servlet: {}", p, service.toString());
                 }
             }
@@ -158,6 +177,6 @@ public class PPNettyServer {
 
     public static void main(String[] args) {
         log.info("[main] ready to start server");
-        new PPNettyServer("localhost", 5555).startSync();
+        new PPMultiWebAppNettyContainer("localhost", 5566).startAsync();
     }
 }

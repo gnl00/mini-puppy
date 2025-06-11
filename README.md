@@ -454,9 +454,81 @@ public void registerServlets(ClassLoader cl) {
 
 这样就完成加载外部 jar 包的逻辑了。这里的 SPI 文件就相当于 tomcat 中需要的 web.xml 文件，里面存放了 servlet 的信息。
 
+`resources/META-INF/services/javax.servlet.http.HttpServlet`
+
+...
+
+```
+one.mini.servlet.external.TestSPINettyServlet
+one.mini.servlet.external.AboutNettyServlet
+one.mini.servlet.external.DocumentNettyServlet
+one.mini.servlet.external.RegisterNettyServlet
+```
+
 为了简化操作，使用了一个自定义注解 @ReqPath 来注册 servlet 的路径，这样在加载 jar 包的时候，只需要扫描这个注解即可。
 
+```java
+@ReqPath(path = {"/test-spi-netty"}, method = "GET")
+public class TestSPINettyServlet extends HttpServlet {
+    @Override
+    protected void doGet(HttpServletRequest req, HttpServletResponse resp) {
+        PPNettyResponse response = (PPNettyResponse) resp;
+        response.send(InnerHTMLUtil.textResponse("GET response from mini-puppy base on netty TestSPINettyServlet"));
+    }
+    @Override
+    protected void doPost(HttpServletRequest req, HttpServletResponse resp) {
+        PPNettyResponse response = (PPNettyResponse) resp;
+        response.send(InnerHTMLUtil.textResponse("POST response from mini-puppy base on netty TestSPINettyServlet"));
+    }
+    @Override
+    protected void service(HttpServletRequest req, HttpServletResponse resp) {
+        if (req.getMethod().equals("GET")) {
+            doGet(req, resp);
+        } else {
+            doPost(req, resp);
+        }
+    }
+}
+```
+
 目前硬编码了外部 jar 的路径为 target/classes/xxx.jar，只需要 `mvn clean & package` 后启动 netty 服务器即可测试。
+
+### 关于 SPI
+
+SPI 的原理其实很简单，就是通过 `META-INF/services/` 文件夹下的文件，来加载类。但是如果我们需要加载很多个 Servlet 类，就需要把所有需要加载的全限定类名写进去，这样维护起来可能有点不方便。
+
+能不能使用一个通配符来实现呢？比如 `one.mini.servlet.external.*`。 查了一下发现 Java 本身是不支持在 SPI 中使用通配符的。
+
+**SPI 的设计规范**
+> 根据 Java SPI 的实现规则，META-INF/services/ 下的配置文件需要明确列出所有实现类的全限定名，不能使用通配符（如 .*）或模糊匹配 。
+> 这是为了确保在运行时能够精确加载所有已声明的服务实现。
+
+**通配符的适用场景**
+> 通配符（如 * 或 ?）通常用于文件系统路径匹配或正则表达式，但在 SPI 的配置文件中，其语法规则仅支持直接的类名字符串。
+> SPI 的加载逻辑依赖 ServiceLoader 类，它会按行读取并尝试加载每个类名，若遇到 .* 会将其视为非法类名并抛出异常。
+
+如果需要批量加载某个包下的所有实现类，可以通过以下方式实现：
+- 手动维护配置文件 ：显式列出所有实现类（推荐标准做法）。
+- 自定义扩展加载器 ：参考 Dubbo SPI 或 Apache ShenYu 的 SPI 扩展机制，结合注解（如 @SPI）和包扫描能力实现动态加载。
+- 构建时生成配置 ：通过构建工具（如 Maven 插件）在编译阶段自动生成 META-INF/services/ 文件内容。
+
+### 多 WebApp 加载支持
+
+前面用到了自定义的 classloader 来加载外部的 webapp，测试情况下我们只加载了一个 webapp，但是 tomcat 通常是可以启动多个 webapp 的。
+
+如果要加载多个 webapp，那就需要考虑到 webapp 隔离的问题。
+
+只使用一个单例 classloader 来加载，如果遇到多个 webapp 使用同一个 servlet 名的或者多个 webapp 使用同一条 url 名字的话就会遇到冲突，同类名的 servlet 类只能被加载一次。
+
+在这里我们的做法可以是每加载一个新的 webapp，都创建一个新的 classloader，这样加载的 servlet 类就不会冲突了。并且将 classloader 和 servlet 映射都保存到一个 WebAppContext 中。
+
+这样子一来，我们的 PPMultiWebAppNettyServer 就可以兼容多个 webapp 了。此外 PPMultiWebAppNettyServer 也应该改名了，它的内部现在可以包含多个 WebServer，可以叫 PPMultiWebAppNettyContainer 了。
+
+Tomcat 做得还要再复杂，具体可以参考 [Tomcat是如何隔离Web应用的？](https://houbb.github.io/2016/11/07/web-server-tomcat-07-hand-write-war)
+
+### Filter/Listener
+
+Filter/Listener 的实现也简单，只要在服务启动前注册一下，等到请求来了，调用对应的类和处理方法就可以了。
 
 ## Reference
 
