@@ -530,6 +530,10 @@ Tomcat 做得还要再复杂，具体可以参考 [Tomcat是如何隔离Web应�
 
 Filter/Listener 的实现也简单，只要在服务启动前注册一下，等到请求来了，调用对应的类和处理方法就可以了。
 
+### 后续
+
+上文按照 tomcat 的基本功能实现了一个小服务，结构上来说不是那么的“Tomcat”，如果想要从结构上也学习一下 Tomcat 的实现，可以参考廖雪峰老师的 [手写 Tomcat](https://liaoxuefeng.com/books/jerrymouse/introduction/index.html)
+
 ## Reference
 
-- https://github.com/houbb/minicat?tab=readme-ov-file
+- https://github.com/houbb/minicat
